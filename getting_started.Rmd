@@ -1,0 +1,14 @@
+---
+title: "Getting started with DiceKriging"
+author: "Victor Trappler"
+date: "2024-04-03"
+output: 
+  pdf_document: default
+  #html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
