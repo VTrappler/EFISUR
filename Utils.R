@@ -49,6 +49,8 @@ fct4 <- function(input) {
 
 # Test functions ########
 
+
+#' Surrogate model of f
 Objective_function <- function(x, d, m, names, model_joint_objective) {
   control <- matrix(x, nrow = 1, ncol = (d + m))
   control <- data.frame(control)
@@ -57,6 +59,7 @@ Objective_function <- function(x, d, m, names, model_joint_objective) {
   return(p$mean)
 }
 
+#' Surrogate model F of E[f(x,U)]
 Expectation_Objective_function <- function(x, alea, d, m, model_joint_objective) {
   m1 <- matrix(x, nrow = 1, ncol = d)
   m1 <- t(matrix(rep(m1, dim(alea)[1]), d, dim(alea)[1]))
@@ -144,8 +147,7 @@ Probability_A <- function(x, alea, Nsim, d, m, list_const_km, seuil, sign, alpha
       checkNames = FALSE, type = "UK", cond = TRUE
     )
   }
-  for (i in 1:d_c)
-  {
+  for (i in 1:d_c) {
     if (sign[i] == ">") {
       realizations[, , i] <- seuil[i] - realizations[, , i]
     } else {

@@ -2,5 +2,5 @@ linters: linters_with_defaults(
     line_length_linter(120),
     commented_code_linter = NULL,
     object_name_linter = NULL,
-    indentation_linter=indentation_linter(4L, c('tidy'))
+    indentation_linter=indentation_linter(2L, c('tidy'))
   )

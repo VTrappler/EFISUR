@@ -1,10 +1,23 @@
+---
+title: "Getting started with DiceKriging"
+author: "Victor Trappler"
+date: "2024-04-03"
+output: pdf_document
+---
+
+# Imports
+```{r}
 library(R6)
 library(ggplot2)
 library(purrr)
 library(patchwork)
 library(httpgd)
-
-
+library(formatR)
+library(ggforce)
+```
+# MOO class
+In order to keep track of MOO problem.
+```{r}
 MultiObj <- R6Class("MultiObj", list(
   f = list(),
   dim_in = NULL,
@@ -54,16 +67,19 @@ MultiObj <- R6Class("MultiObj", list(
   rhs <- -(1 / 3) * ((1 - 1 / (8 * pi)) * cos(b1) + 1)
   return(lhs + cen + rhs)
 }
-
-
+```
+Define MultiObjective Branin-Hoo function
+```{r}
 branin <- MultiObj$new(dim_in = 2)
 branin$add_objective(.f1)
 branin$add_objective(.f2)
-
+```
+## First plots
+```{r}
 x_plot <- seq(0, 1, 0.05)
 y_plot <- seq(0, 1, 0.05)
-df <- data.frame(expand.grid(x1 = x_plot, x2 = y_plot))
-df_res <- branin$evaluate(df)
+df_grid <- data.frame(expand.grid(x1 = x_plot, x2 = y_plot))
+df_res <- branin$evaluate(df_grid)
 fc1 <- ggplot() +
   geom_contour_filled(data = df_res, mapping = aes(x = x1, y = x2, z = f1)) +
   coord_fixed()
@@ -72,8 +88,12 @@ fc2 <- ggplot() +
   coord_fixed()
 
 fc1 + fc2 + plot_annotation("Contour plots of f_1 and f_2")
+```
 
-
+## Estimation of the Pareto front and set
+The estimation depends on the points where the function is evaluated.
+The *true* pareto front is defined  as the pareto front defined using the regular grid `df_grid`
+```{r}
 estimate_pareto_front <- function(df_res) {
   D <- df_res[order(df_res$f1, df_res$f2, decreasing = FALSE), ]
   front <- D[which(!duplicated(cummin(D$f2))), ]
@@ -81,10 +101,10 @@ estimate_pareto_front <- function(df_res) {
 }
 
 
-df_samples <- data.frame(expand.grid(x1 = x_plot, x2 = y_plot))
-df_res <- branin$evaluate(df_samples)
-pareto <- estimate_pareto_front(df_res)
-pareto_front_true <- geom_step(data = pareto, mapping = aes(x = f1, y = f2), alpha = 1, colour = "red")
+# df_eval_grid <- branin$evaluate(df_grid)
+df_eval_grid <- branin$evaluate(data.frame(x1 = runif(2000), x2 = runif(2000)))
+pareto <- estimate_pareto_front(df_eval_grid)
+pareto_front_true <- geom_step(data = pareto, mapping = aes(x = f1, y = f2), alpha = 1, colour = "red", linewidth = 1.3)
 pareto_front <- ggplot() + pareto_front_true
 pareto_set_true <- geom_point(data = pareto, mapping = aes(x = x1, y = x2), colour = "red")
 pareto_set <- ggplot() + pareto_set_true
@@ -97,16 +117,18 @@ for (i in 1:50) {
 }
 (pareto_front + ggtitle("Pareto Front")) +
   (pareto_set + ggtitle("Pareto set")) +
-  plot_annotation(title = "Pareto under different sampling points")
+  plot_annotation(title = "Pareto front under sampling uncertainty")
+```
 
 
 
 
-
-
-
+## GP regression
+We use `DiceKriging` for the GP regression
+### Mean and std
+```{r}
 library(DiceKriging)
-n_training <- 20
+n_training <- 10
 df_samples <- data.frame(x1 = runif(n_training), x2 = runif(n_training))
 df_res <- branin$evaluate(df_samples)
 model1 <- km(
@@ -115,9 +137,9 @@ model1 <- km(
 model2 <- km(
   formula = ~1, design = df_samples, response = df_res$f2
 )
-prediction <- predict(model1, newdata = df, type = "UK", checkNames = FALSE)
+prediction <- predict(model1, newdata = df_grid, type = "UK", checkNames = FALSE)
 predict_df <- data.frame(
-  x1 = df$x1, x2 = df$x2, pred = prediction$mean, pred_sd = (prediction$sd),
+  x1 = df_grid$x1, x2 = df_grid$x2, pred = prediction$mean, pred_sd = (prediction$sd),
   lower = prediction$mean - prediction$sd, upper = prediction$mean + prediction$sd
 )
 k_fc <- ggplot() +
@@ -130,44 +152,50 @@ k_sd <- ggplot() +
   coord_fixed()
 
 k_fc + k_sd + plot_annotation("GP mean and GP sd of f1")
+```
 
 
+### Conditional simulations
 
-
-
-df_simulated <- data.frame(df,
-  f1 = t(simulate(model1, newdata = df, cond=TRUE)),
-  f2 = t(simulate(model2, newdata = df, cond=TRUE))
+```{r}
+df_simulated <- data.frame(df_grid,
+  f1 = t(simulate(model1, newdata = df_grid, cond = TRUE)),
+  f2 = t(simulate(model2, newdata = df_grid, cond = TRUE))
 )
 fc1_sim <- ggplot() +
   geom_contour_filled(data = df_simulated, mapping = aes(x = x1, y = x2, z = f1)) +
-    geom_point(data = df_samples, mapping = aes(x = x1, y = x2, color = "Sampled points"), color = "red") +
+  geom_point(data = df_samples, mapping = aes(x = x1, y = x2, color = "Sampled points"), color = "red") +
   coord_fixed()
 fc2_sim <- ggplot() +
   geom_contour_filled(data = df_simulated, mapping = aes(x = x1, y = x2, z = f2)) +
   coord_fixed()
 
-fc1 + fc2 + fc1_sim + fc2_sim + plot_annotation("Contour plots of simulated f_1 and f_2")
-
-df_simulations <- data.frame(df, f1 = double(length(df$x1)), f2 = double(length(df$x1)), r = factor(length(df$x1)))
-for (i in 1:10) {
-  df_simulations <- rbind(df_simulations, data.frame(df,
-    f1 = t(simulate(model1, newdata = df, cond=TRUE)),
-    f2 = t(simulate(model2, newdata = df, cond=TRUE)),
+fc1_sim + fc2_sim + plot_annotation("Contour plots of simulated f_1 and f_2")
+```
+```{r}
+df_simulations <- data.frame(df_grid,
+  f1 = double(length(df_grid$x1)),
+  f2 = double(length(df_grid$x1)), r = factor(length(df_grid$x1))
+)
+for (i in 1:20) {
+  df_simulations <- rbind(df_simulations, data.frame(df_grid,
+    f1 = t(simulate(model1, newdata = df_grid, cond = TRUE)),
+    f2 = t(simulate(model2, newdata = df_grid, cond = TRUE)),
     r = as.factor(i)
   ))
 }
 paretos <- do.call(rbind, by(df_simulations, df_simulations["r"], estimate_pareto_front))
+paretos <- paretos[-c(1), ]
+```
 
+```{r}
+plt_paretos <- ggplot() +
+  pareto_front_true +
+  geom_step(data = paretos, aes(x = f1, y = f2, group = r), alpha = 0.2)
+plt_paretos + ggtitle("samples of Pareto front, under GP uncertainty, regular grid")
+```
 
-
-
-plt_paretos <- pareto_front_true +
-  geom_step(data = paretos, aes(x = f1, y = f2, group = r), alpha = 0.1)
-plt_paretos
-
-
-
+```{r}
 is_dominated <- function(dom, x) {
   return((all(dom$f1 > x$f1 | dom$f2 > x$f2)))
 }
@@ -178,26 +206,41 @@ df_f <- expand.grid(f1 = seq(-100, 200, length.out = 60), f2 = seq(-35, 0, lengt
 df_f[, "isdominated"] <- 0
 for (j in seq_along(splitted)) {
   for (i in seq_len(nrow(df_f))) {
-    df_f[i, "isdominated"] <- df_f[i, "isdominated"] + is_dominated(splitted[[j]], df_f[i, ])/length(splitted)
+    df_f[i, "isdominated"] <- df_f[i, "isdominated"] + is_dominated(splitted[[j]], df_f[i, ]) / (1 + length(splitted))
   }
 }
+```
+```{r}
+brks <- c(0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1., 2)
+q95 <- df_f[df_f["isdominated"] >= 0.95, ]
+q50 <- df_f[df_f["isdominated"] >= 0.50, ]
+q05 <- df_f[df_f["isdominated"] >= 0.05, ]
+test_plot <- test_plt +
+  geom_contour_filled(aes(f1, f2, z = as.numeric(isdominated)), data = df_f, alpha = 1, breaks = brks) +
+  scale_fill_brewer(palette = "RdBu") +
+  geom_mark_hull(data = q95, mapping = aes(f1, f2, color = "blue", ), expand = 0, radius = 0, colour = "blue") +
+  geom_mark_hull(data = q50, mapping = aes(f1, f2, color = "black", ), expand = 0, radius = 0, colour = "black") +
+  geom_mark_hull(data = q05, mapping = aes(f1, f2, color = "orange", ), expand = 0, radius = 0, colour = "orange") +
+  pareto_front_true +
+  ggtitle("Probability (wrt cond simulations) of being not dominated")
 
-test_plt + geom_contour_filled(aes(f1, f2, z = as.numeric(isdominated)), data = df_f, alpha = 1) +
-  pareto_front_true + plot_annotation("Probability of being not dominated")
+test_plot
+```
 
-
-
-
-pareto <- estimate_pareto_front(df_res_sim)
-pareto_front <- pareto_front_true +
+```{r}
+# pareto <- estimate_pareto_front(df_res_sim)
+pareto_front <- ggplot() +
+  pareto_front_true +
   geom_step(data = pareto, mapping = aes(x = f1, y = f2), alpha = 0.1)
 pareto_set <- ggplot() +
   geom_point(data = pareto, mapping = aes(x = x1, y = x2))
 
+n_training <- 50
 for (i in 1:100) {
-  df_res_sim <- data.frame(df,
-    f1 = t(simulate(model1, newdata = df, cond=TRUE)),
-    f2 = t(simulate(model2, newdata = df, cond=TRUE))
+  df_samples <- data.frame(x1 = runif(n_training), x2 = runif(n_training))
+  df_res_sim <- data.frame(df_samples,
+    f1 = t(simulate(model1, newdata = df_samples, cond = TRUE)),
+    f2 = t(simulate(model2, newdata = df_samples, cond = TRUE))
   )
   pareto <- estimate_pareto_front(df_res_sim)
   pareto_front <- pareto_front +
@@ -206,5 +249,4 @@ for (i in 1:100) {
     geom_point(data = pareto, mapping = aes(x = x1, y = x2))
 }
 pareto_front + pareto_set
-
-
+```

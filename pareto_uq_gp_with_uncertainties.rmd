@@ -1,0 +1,166 @@
+---
+title: "Getting started with DiceKriging"
+author: "Victor Trappler"
+date: "2024-04-03"
+output: pdf_document
+---
+
+# Imports
+```{r}
+library(R6)
+library(ggplot2)
+library(purrr)
+library(patchwork)
+library(httpgd)
+library(formatR)
+library(ggforce)
+```
+# MOO class
+In order to keep track of MOO problem.
+```{r}
+RMultiObj <- R6Class("RMultiObj", list(
+  f = list(),
+  dim_in = NULL,
+  dim_unc = NULL,
+  input_names = NULL,
+  output_names = NULL,
+  initialize = function(dim_in, dim_unc) {
+    self$dim_in <- dim_in
+    self$dim_unc <- dim_unc
+    self$input_names <- c()
+    for (i in 1:self$dim_in) {
+      self$input_names <- c(self$input_names, paste0("x", i))
+    }
+    for (i in 1:self$dim_unc) {
+      self$input_names <- c(self$input_names, paste0("u", i))
+    }
+  },
+  add_objective = function(closure) {
+    self$f[[length(self$f) + 1]] <- closure
+  },
+  dim_out = function() {
+    self$output_names <- c()
+    for (i in seq_along(self$f)) {
+      self$output_names <- c(self$output_names, paste0("f", i))
+    }
+    return(length(self$f))
+  },
+  evaluate = function(input_df) {
+    df_res <- input_df
+    for (i in 1:self$dim_out()) {
+      out <- unlist(pmap(input_df, (self$f[[i]])))
+      df_res <- cbind(df_res, data.frame(out))
+    }
+    colnames(df_res) <- c(self$input_names, self$output_names)
+    return(df_res)
+  }
+))
+
+
+.f1 <- function(x1, x2, u1, u2) {
+  b1 <- 15 * abs(x1 + u1) - 5
+  b2 <- 15 * abs(x2 + u2)
+  lhs <- (b2 - (5.1 / (4 * pi^2)) * b1^2 + 5 * b1 / pi - 6)^2
+  rhs <- 10 * ((1 - (1 / (8 * pi))) * cos(b1) + 1)
+  return(lhs + rhs)
+}
+.f2 <- function(x1, x2, u1, u2) {
+  b1 <- 15 * abs(x1 + u1) - 5
+  b2 <- 15 * abs(x2 + u2)
+  lhs <- -sqrt((10.5 - b1) * (b1 + 5.5) * (b2 + 0.5))
+  cen <- -(1 / 30) * (b2 - (5.1 / (4 * pi^2)) * b1^2 + -6)^2
+  rhs <- -(1 / 3) * ((1 - 1 / (8 * pi)) * cos(b1) + 1)
+  return(lhs + cen + rhs)
+}
+```
+Define MultiObjective Branin-Hoo function
+```{r}
+branin <- RMultiObj$new(dim_in = 2, dim_unc = 2)
+branin$add_objective(.f1)
+branin$add_objective(.f2)
+```
+## First plots
+```{r}
+x_plot <- seq(0, 1, 0.05)
+y_plot <- seq(0, 1, 0.05)
+df_grid <- data.frame(expand.grid(x1 = x_plot, x2 = y_plot, u1 = 0, u2 = 0))
+df_res <- branin$evaluate(df_grid)
+fc1 <- ggplot() +
+  geom_contour_filled(data = df_res, mapping = aes(x = x1, y = x2, z = f1)) +
+  coord_fixed()
+fc2 <- ggplot() +
+  geom_contour_filled(data = df_res, mapping = aes(x = x1, y = x2, z = f2)) +
+  coord_fixed()
+
+fc1 + fc2 + plot_annotation("Contour plots of f_1 and f_2")
+```
+
+## Estimation of the Pareto front and set
+The estimation depends on the points where the function is evaluated.
+The *true* pareto front is defined  as the pareto front defined using the regular grid `df_grid`
+```{r}
+estimate_pareto_front <- function(df_res) {
+  D <- df_res[order(df_res$f1, df_res$f2, decreasing = FALSE), ]
+  front <- D[which(!duplicated(cummin(D$f2))), ]
+  return(front)
+}
+
+
+# df_eval_grid <- branin$evaluate(df_grid)
+get_pareto_conditional <- function(u1, u2) {
+  df_eval_grid <- branin$evaluate(data.frame(x1 = runif(2000), x2 = runif(2000), u1 = u1, u2 = u2))
+  pareto <- estimate_pareto_front(df_eval_grid)
+  return(pareto)
+}
+
+plt <- ggplot()
+for (i in 1:50) {
+  pareto <- get_pareto_conditional(0.1 * runif(1), 0.1 * runif(1))
+  plt <- plt + geom_step(data = pareto, mapping = aes(x = f1, y = f2), alpha = 1)
+}
+plt
+```
+
+```{r}
+evaluate_image_u_rnd <- function(x1, x2) {
+  df <- branin$evaluate(data.frame(x1 = x1, x2 = x2, u1 = 0.1 * rnorm(1000), u2 = 0.1 * rnorm(1000)))
+  return(df)
+}
+df_image <- evaluate_image_u_rnd(0.5, 0.5)
+p1 <- ggplot() +
+  geom_point(aes(f1, f2), data = df_image, alpha = 0.3)
+df_image <- evaluate_image_u_rnd(0.2, 0.7)
+p2 <- ggplot() +
+  geom_point(aes(f1, f2), data = df_image, alpha = 0.3)
+df_image <- evaluate_image_u_rnd(0.8, 0.3)
+p3 <- ggplot() +
+  geom_point(aes(f1, f2), data = df_image, alpha = 0.3)
+df_image <- evaluate_image_u_rnd(0.1, 0.1)
+p4 <- ggplot() +
+  geom_point(aes(f1, f2), data = df_image, alpha = 0.3)
+
+p1 + p2 + p3 + p4 & xlim(0, 400) & ylim(-35, 0)
+```
+
+```{r}
+is_dominated <- function(dom, x) {
+  return((all(dom$f1 > x$f1 | dom$f2 > x$f2)))
+}
+
+samples_obj_space <- data.frame(
+  f2 = runif(1000, min = -10, max = 400),
+  f1 = runif(1000, min = -40, max = 0)
+)
+
+prob_of_domination <- function(domain, samples_obj_space) {
+  samples_obj_space[, "prob"] <- 0
+  for (i in seq_len(nrow(samples_obj_space))) {
+    for (j in seq_len(nrow(domain))) {
+      samples_obj_space[i, "prob"] <- samples_obj_space[i, "prob"] + is_dominated(domain[j, ], samples_obj_space[i, ])
+    }
+  }
+  return(samples_obj_space)
+}
+
+df <- prob_of_domination(df_image, samples_obj_space)
+```
